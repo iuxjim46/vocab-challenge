@@ -118,19 +118,18 @@
         import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // ==========================================
-        // 重要：請將下方的設定替換成你自己的 Firebase Config
-        // 你可以在 Firebase Console > 專案設定 > 您的應用程式 中找到
+        // 你的 Firebase Config 區域
         // ==========================================
         const firebaseConfig = {
             apiKey: "AIzaSyAnth5dJL4asIgON8d1oYbyO713zek9S8U",
-            authDomain: "AIzaSyAnth5dJL4asIgON8d1oYbyO713zek9S8U",
+            authDomain: "vocab-challenge-d9d85.firebaseapp.com",
             projectId: "vocab-challenge-d9d85",
             storageBucket: "vocab-challenge-d9d85.firebasestorage.app",
             messagingSenderId: "345399946704",
             appId: "1:345399946704:web:d09cc15ef235e3676f1dd5"
         };
         
-        const appId = "vocab-speaking-gh-pages"; // GitHub 上的專案標識
+        const appId = "vocab-speaking-gh-pages"; 
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -216,19 +215,41 @@
                 document.getElementById('login-status').innerText = "❌ 請輸入完整的班級與座號！";
                 return;
             }
+
+            // --- 班級與座號自動校正邏輯 ---
+            let cVal = parseInt(classInputStr);
+            let sVal = parseInt(seatInputStr);
+            
+            // 班級邏輯：如果輸入 1~12，自動轉為 701~712
+            let normalizedClass = String(cVal);
+            if (cVal >= 1 && cVal <= 12) {
+                normalizedClass = "7" + String(cVal).padStart(2, '0');
+            }
+            
+            // 座號邏輯：補零轉為二位數
+            let normalizedSeat = String(sVal).padStart(2, '0');
+
+            currentClass = normalizedClass;
+            studentId = normalizedSeat;
+
             const btn = document.getElementById('login-btn');
             btn.disabled = true;
             try {
                 await initAuth();
-                currentClass = classInputStr;
-                studentId = seatInputStr;
                 const userRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'progress', 'status');
                 const userSnap = await getDoc(userRef);
                 if (userSnap.exists()) {
                     masteredMap = userSnap.data().masteredMap || {};
                     currentScore = userSnap.data().score || 0;
                 }
-                const loginData = { class: currentClass, seat: studentId, score: currentScore, masteredMap: masteredMap, updatedAt: serverTimestamp(), uid: auth.currentUser.uid };
+                const loginData = { 
+                    class: currentClass, 
+                    seat: studentId, 
+                    score: currentScore, 
+                    masteredMap: masteredMap, 
+                    updatedAt: serverTimestamp(), 
+                    uid: auth.currentUser.uid 
+                };
                 await setDoc(userRef, loginData, { merge: true });
                 await syncToPublicLeaderboard(loginData);
                 document.getElementById('display-info').innerText = `${currentClass} 班 ${studentId} 號`;
