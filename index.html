@@ -216,17 +216,10 @@
                 return;
             }
 
-            // --- 班級與座號自動校正邏輯 ---
             let cVal = parseInt(classInputStr);
             let sVal = parseInt(seatInputStr);
-            
-            // 班級邏輯：如果輸入 1~12，自動轉為 701~712
             let normalizedClass = String(cVal);
-            if (cVal >= 1 && cVal <= 12) {
-                normalizedClass = "7" + String(cVal).padStart(2, '0');
-            }
-            
-            // 座號邏輯：補零轉為二位數
+            if (cVal >= 1 && cVal <= 12) normalizedClass = "7" + String(cVal).padStart(2, '0');
             let normalizedSeat = String(sVal).padStart(2, '0');
 
             currentClass = normalizedClass;
@@ -242,14 +235,7 @@
                     masteredMap = userSnap.data().masteredMap || {};
                     currentScore = userSnap.data().score || 0;
                 }
-                const loginData = { 
-                    class: currentClass, 
-                    seat: studentId, 
-                    score: currentScore, 
-                    masteredMap: masteredMap, 
-                    updatedAt: serverTimestamp(), 
-                    uid: auth.currentUser.uid 
-                };
+                const loginData = { class: currentClass, seat: studentId, score: currentScore, masteredMap: masteredMap, updatedAt: serverTimestamp(), uid: auth.currentUser.uid };
                 await setDoc(userRef, loginData, { merge: true });
                 await syncToPublicLeaderboard(loginData);
                 document.getElementById('display-info').innerText = `${currentClass} 班 ${studentId} 號`;
@@ -260,7 +246,7 @@
                 renderVocab();
                 setupLeaderboardListener();
             } catch (error) {
-                alert("登入失敗，請確認 Firebase 設定是否正確。");
+                alert("登入失敗，請確認 Firebase 設定。");
                 btn.disabled = false;
             }
         };
@@ -272,13 +258,28 @@
 
         window.handleStartSpeaking = (id, targetText, btn) => {
             if (isRecording) return;
+            
+            // 在開始辨識前停止所有 TTS 發音，防止 iOS 衝突
+            window.speechSynthesis.cancel();
+
             const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRec) { showFeedback("此裝置不支援語音辨識", "fail"); return; }
+            if (!SpeechRec) { 
+                showFeedback("此裝置不支持語音辨識，請使用 Safari", "fail"); 
+                return; 
+            }
+
             const recognition = new SpeechRec();
             recognition.lang = 'en-US';
-            isRecording = true;
-            btn.innerHTML = `<span class="recording-pulse">🔴 聆聽中...</span>`;
-            recognition.start();
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            // 只有在辨識真正開始後才修改 UI
+            recognition.onstart = () => {
+                isRecording = true;
+                btn.innerHTML = `<span class="recording-pulse">🔴 聆聽中...</span>`;
+                btn.classList.add('bg-red-500'); // 增加明顯視覺提示
+            };
+
             recognition.onresult = async (e) => {
                 const saidText = e.results[0][0].transcript;
                 const targetWords = clean(targetText);
@@ -303,10 +304,35 @@
                     }
                     showFeedback("Excellent! 🌟", "success");
                     playSuccessSound();
-                } else { showFeedback("Try again!", "fail"); }
+                } else { 
+                    showFeedback("Try again!", "fail"); 
+                }
             };
-            recognition.onerror = () => { isRecording = false; showFeedback("未偵測到聲音", "fail"); renderVocab(); };
-            recognition.onend = () => { isRecording = false; renderVocab(); };
+
+            recognition.onerror = (event) => {
+                isRecording = false;
+                const errorMap = {
+                    'not-allowed': '請允許麥克風權限',
+                    'network': '網路連線錯誤',
+                    'no-speech': '未偵測到聲音'
+                };
+                showFeedback(errorMap[event.error] || "辨識失敗，請重試", "fail");
+                renderVocab(); // 重置按鈕狀態
+            };
+
+            recognition.onend = () => { 
+                isRecording = false; 
+                renderVocab(); 
+            };
+
+            try {
+                recognition.start();
+            } catch (err) {
+                console.error("Recognition Start Error:", err);
+                isRecording = false;
+                showFeedback("啟動辨識失敗，請重整頁面", "fail");
+                renderVocab();
+            }
         };
 
         async function syncToPublicLeaderboard(scoreData) {
