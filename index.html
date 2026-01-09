@@ -229,13 +229,21 @@
             btn.disabled = true;
             try {
                 await initAuth();
+                // 私人資料路徑 (符合 Rule 1)
                 const userRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'progress', 'status');
                 const userSnap = await getDoc(userRef);
                 if (userSnap.exists()) {
                     masteredMap = userSnap.data().masteredMap || {};
                     currentScore = userSnap.data().score || 0;
                 }
-                const loginData = { class: currentClass, seat: studentId, score: currentScore, masteredMap: masteredMap, updatedAt: serverTimestamp(), uid: auth.currentUser.uid };
+                const loginData = { 
+                    class: currentClass, 
+                    seat: studentId, 
+                    score: currentScore, 
+                    masteredMap: masteredMap, 
+                    updatedAt: serverTimestamp(), 
+                    uid: auth.currentUser.uid 
+                };
                 await setDoc(userRef, loginData, { merge: true });
                 await syncToPublicLeaderboard(loginData);
                 document.getElementById('display-info').innerText = `${currentClass} 班 ${studentId} 號`;
@@ -349,8 +357,11 @@
 
                 // 給予音訊系統 300ms 緩衝時間 (iOS 必要)
                 setTimeout(() => {
-                    recognition.start();
-                }, 300);
+                    recognition.abort(); // 強制重置辨識引擎
+                    setTimeout(() => {
+                        recognition.start();
+                    }, 100);
+                }, 200);
 
             } catch (err) {
                 console.error("Recognition Start Fatal Error:", err);
@@ -359,11 +370,18 @@
             }
         };
 
+        // --- 排行榜同步優化 (解決重複問題) ---
         async function syncToPublicLeaderboard(scoreData) {
             if (!auth.currentUser) return;
             try {
-                const pubRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', auth.currentUser.uid);
-                await setDoc(pubRef, { ...scoreData, uid: auth.currentUser.uid, updatedAt: serverTimestamp() }, { merge: true });
+                // 改用「班級_座號」作為文件 ID，確保同一個人只會有一筆紀錄
+                const leaderDocId = `${currentClass}_${studentId}`;
+                const pubRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', leaderDocId);
+                await setDoc(pubRef, { 
+                    ...scoreData, 
+                    uid: auth.currentUser.uid, 
+                    updatedAt: serverTimestamp() 
+                }, { merge: true });
             } catch (e) { console.error(e); }
         }
 
@@ -414,13 +432,20 @@
                     isLeaderboardActive = true;
                     const players = []; snap.forEach(d => players.push(d.data()));
                     if (players.length === 0) { document.getElementById('leaderboard-list').innerHTML = `<div class="text-center py-10 text-slate-400 font-bold">目前尚無挑戰數據</div>`; return; }
+                    
+                    // 排序邏輯：分數由高到低，同分則比班級、座號
                     players.sort((a,b) => (b.score || 0) - (a.score || 0) || String(a.class).localeCompare(String(b.class)) || parseInt(a.seat) - parseInt(b.seat));
-                    document.getElementById('leaderboard-list').innerHTML = players.map((p,i) => `
-                        <div class="flex items-center justify-between p-4 rounded-[24px] ${p.uid === auth.currentUser?.uid ? 'bg-indigo-600 text-white shadow-xl scale-[1.02]' : 'bg-slate-50'} transition-all">
-                            <span class="font-black w-8 text-center text-sm ${p.uid === auth.currentUser?.uid ? 'text-white/50' : 'text-slate-300'}">${i+1}</span>
-                            <div class="flex-1 flex flex-col ml-3"><span class="text-[10px] font-bold uppercase ${p.uid === auth.currentUser?.uid ? 'text-white/70' : 'text-slate-400'}">${p.class || '--'} 班 - ${p.seat || '--'} 號</span><span class="font-extrabold text-lg tracking-tight">小勇者</span></div>
+                    
+                    document.getElementById('leaderboard-list').innerHTML = players.map((p,i) => {
+                        // 判斷是否為目前的使用者 (改用班級座號判斷，因為 UID 可能會變)
+                        const isMe = (p.class === currentClass && p.seat === studentId);
+                        return `
+                        <div class="flex items-center justify-between p-4 rounded-[24px] ${isMe ? 'bg-indigo-600 text-white shadow-xl scale-[1.02]' : 'bg-slate-50'} transition-all">
+                            <span class="font-black w-8 text-center text-sm ${isMe ? 'text-white/50' : 'text-slate-300'}">${i+1}</span>
+                            <div class="flex-1 flex flex-col ml-3"><span class="text-[10px] font-bold uppercase ${isMe ? 'text-white/70' : 'text-slate-400'}">${p.class || '--'} 班 - ${p.seat || '--'} 號</span><span class="font-extrabold text-lg tracking-tight">小勇者</span></div>
                             <div class="text-right"><span class="block font-black text-2xl">${p.score || 0}</span></div>
-                        </div>`).join('');
+                        </div>`;
+                    }).join('');
                 });
             } catch (e) { console.error(e); }
         };
