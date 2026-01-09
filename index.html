@@ -256,10 +256,11 @@
         window.playPronunciation = (text, speed) => { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'en-US'; utterance.rate = speed; window.speechSynthesis.speak(utterance); };
         function clean(s) { return s.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g,"").split(/\s+/).filter(x => x.length > 0); }
 
+        // --- 強化的口說辨識處理邏輯 ---
         window.handleStartSpeaking = (id, targetText, btn) => {
             if (isRecording) return;
             
-            // 在開始辨識前停止所有 TTS 發音，防止 iOS 衝突
+            // 1. 強制停止所有發音，避免 iOS 系統忙線
             window.speechSynthesis.cancel();
 
             const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -273,11 +274,14 @@
             recognition.interimResults = false;
             recognition.maxAlternatives = 1;
 
-            // 只有在辨識真正開始後才修改 UI
+            let safetyTimer = null;
+
+            // 啟動辨識成功
             recognition.onstart = () => {
                 isRecording = true;
                 btn.innerHTML = `<span class="recording-pulse">🔴 聆聽中...</span>`;
-                btn.classList.add('bg-red-500'); // 增加明顯視覺提示
+                btn.classList.add('bg-red-500');
+                if (safetyTimer) clearTimeout(safetyTimer);
             };
 
             recognition.onresult = async (e) => {
@@ -309,29 +313,49 @@
                 }
             };
 
-            recognition.onerror = (event) => {
+            // 錯誤處理
+            const resetState = () => {
                 isRecording = false;
+                if (safetyTimer) clearTimeout(safetyTimer);
+                renderVocab(); // 重新渲染按鈕狀態
+            };
+
+            recognition.onerror = (event) => {
+                console.error("Speech Recognition Error:", event.error);
                 const errorMap = {
                     'not-allowed': '請允許麥克風權限',
                     'network': '網路連線錯誤',
-                    'no-speech': '未偵測到聲音'
+                    'no-speech': '未偵測到聲音',
+                    'aborted': '辨識被中斷'
                 };
                 showFeedback(errorMap[event.error] || "辨識失敗，請重試", "fail");
-                renderVocab(); // 重置按鈕狀態
+                resetState();
             };
 
             recognition.onend = () => { 
-                isRecording = false; 
-                renderVocab(); 
+                resetState();
             };
 
+            // iOS 穩定啟動機制
             try {
-                recognition.start();
+                // 安全機制：如果 2 秒內沒進入 onstart，強行重置 (防止 iOS 卡死)
+                safetyTimer = setTimeout(() => {
+                    if (!isRecording) {
+                        console.warn("Speech Recognition Timeout");
+                        showFeedback("連線逾時，請再按一次", "fail");
+                        resetState();
+                    }
+                }, 2000);
+
+                // 給予音訊系統 300ms 緩衝時間 (iOS 必要)
+                setTimeout(() => {
+                    recognition.start();
+                }, 300);
+
             } catch (err) {
-                console.error("Recognition Start Error:", err);
-                isRecording = false;
-                showFeedback("啟動辨識失敗，請重整頁面", "fail");
-                renderVocab();
+                console.error("Recognition Start Fatal Error:", err);
+                showFeedback("啟動失敗，請重整頁面", "fail");
+                resetState();
             }
         };
 
